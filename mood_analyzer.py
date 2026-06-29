@@ -11,7 +11,9 @@ This class starts with very simple logic:
 
 from typing import List, Dict, Tuple, Optional
 
-from dataset import POSITIVE_WORDS, NEGATIVE_WORDS
+import re
+
+from dataset import POSITIVE_WORDS, NEGATIVE_WORDS, EMOJI_SCORES
 
 
 class MoodAnalyzer:
@@ -52,10 +54,17 @@ class MoodAnalyzer:
           - Handle simple emojis separately (":)", ":-(", "🥲", "😂")
           - Normalize repeated characters ("soooo" -> "soo")
         """
-        cleaned = text.strip().lower()
-        tokens = cleaned.split()
+        # Extract emoji tokens before lowercasing so they survive stripping
+        emoji_tokens = [ch for ch in text if ch in EMOJI_SCORES]
+        # Also capture text emoticons like :) before lowercasing strips context
+        emoticon_tokens = re.findall(r":[)(|]", text)
 
-        return tokens
+        cleaned = text.strip().lower()
+        # Remove punctuation except apostrophes (to keep "not" intact)
+        cleaned = re.sub(r"[^\w\s']", " ", cleaned)
+        word_tokens = cleaned.split()
+
+        return word_tokens + emoji_tokens + emoticon_tokens
 
     # ---------------------------------------------------------------------
     # Scoring logic
@@ -75,15 +84,35 @@ class MoodAnalyzer:
           - Give some words higher weights than others (for example "hate" < "annoyed")
           - Treat emojis or slang (":)", "lol", "💀") as strong signals
         """
-        # TODO: Implement this method.
-        #   1. Call self.preprocess(text) to get tokens.
-        #   2. Loop over the tokens.
-        #   3. Increase the score for positive words, decrease for negative words.
-        #   4. Return the total score.
-        #
-        # Hint: if you implement negation, you may want to look at pairs of tokens,
-        # like ("not", "happy") or ("never", "fun").
-        pass
+        tokens = self.preprocess(text)
+        score = 0
+        negation_words = {"not", "never", "no", "can't", "dont", "don't", "isn't", "wasn't"}
+        negated = False
+
+        for token in tokens:
+            # Emoji / emoticon scores bypass the word lists
+            if token in EMOJI_SCORES:
+                score += EMOJI_SCORES[token]
+                negated = False
+                continue
+
+            if token in negation_words:
+                negated = True
+                continue
+
+            word_score = 0
+            if token in self.positive_words:
+                word_score = 1
+            elif token in self.negative_words:
+                word_score = -1
+
+            if negated and word_score != 0:
+                word_score = -word_score
+                negated = False
+
+            score += word_score
+
+        return score
 
     # ---------------------------------------------------------------------
     # Label prediction
@@ -105,12 +134,21 @@ class MoodAnalyzer:
         Just remember that whatever labels you return should match the labels
         you use in TRUE_LABELS in dataset.py if you care about accuracy.
         """
-        # TODO: Implement this method.
-        #   1. Call self.score_text(text) to get the numeric score.
-        #   2. Return "positive" if the score is above 0.
-        #   3. Return "negative" if the score is below 0.
-        #   4. Return "neutral" otherwise.
-        pass
+        score = self.score_text(text)
+        if score >= 2:
+            return "positive"
+        if score <= -2:
+            return "negative"
+        if score == 1:
+            # Weak positive — could be mixed if negative words also present
+            tokens = self.preprocess(text)
+            has_negative = any(t in self.negative_words for t in tokens)
+            return "mixed" if has_negative else "positive"
+        if score == -1:
+            tokens = self.preprocess(text)
+            has_positive = any(t in self.positive_words for t in tokens)
+            return "mixed" if has_positive else "negative"
+        return "neutral"
 
     # ---------------------------------------------------------------------
     # Explanations (optional but recommended)
